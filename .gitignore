@@ -1,0 +1,26 @@
+# Build folder (C++ CMake build)
+build/
+
+# Node modules
+node_modules/
+gateway/node_modules/
+ui/node_modules/
+
+# Frontend build
+ui/dist/
+
+# vcpkg installed libraries
+vcpkg_installed/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+
+# VSCode settings
+.vscode/
