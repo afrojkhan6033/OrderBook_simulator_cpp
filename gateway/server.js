@@ -28,10 +28,16 @@ const MAGIC_0       = 0x48;  // 'H'
 const MAGIC_1       = 0x46;  // 'F'
 const FRAME_HDR_LEN = 8;     // 2 magic + 1 version + 1 type + 4 len
 
-const MSG_SNAPSHOT  = 0;
-const MSG_DELTA     = 1;
-const MSG_TRADE     = 2;
-const MSG_STATS     = 3;
+const MSG_SNAPSHOT         = 0;
+const MSG_DELTA            = 1;
+const MSG_TRADE            = 2;
+const MSG_STATS            = 3;
+const MSG_MICROSTRUCTURE   = 4;
+const MSG_SIGNALS          = 5;
+const MSG_RISK             = 6;
+const MSG_BOOK_DYNAMICS    = 7;
+const MSG_REGIME           = 8;
+const MSG_STRATEGY         = 9;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let latestSnapshot = null;   // cached for new WS clients
@@ -124,6 +130,24 @@ function dispatchFrame(msgType, payload) {
                 break;
             case MSG_STATS:
                 handleStatsFrame(payload);
+                break;
+            case MSG_MICROSTRUCTURE:
+                handleMicrostructureFrame(payload);
+                break;
+            case MSG_SIGNALS:
+                handleSignalsFrame(payload);
+                break;
+            case MSG_RISK:
+                handleRiskFrame(payload);
+                break;
+            case MSG_BOOK_DYNAMICS:
+                handleBookDynamicsFrame(payload);
+                break;
+            case MSG_REGIME:
+                handleRegimeFrame(payload);
+                break;
+            case MSG_STRATEGY:
+                handleStrategyFrame(payload);
                 break;
             default:
                 console.warn(`[Parser] Unknown msg_type: ${msgType}`);
@@ -232,10 +256,10 @@ function handleStatsFrame(payload) {
     const maxProcUs       = readUInt64LE(payload, off); off += 8;
     const minProcUs       = readUInt64LE(payload, off); off += 8;
 
-    const spreadBps   = payload.readDoubleBE(off); off += 8;
-    const midPrice    = payload.readDoubleBE(off); off += 8;
-    const imbalance   = payload.readDoubleBE(off); off += 8;
-    const ofi         = payload.readDoubleBE(off); off += 8;
+    const spreadBps   = payload.readDoubleLE(off); off += 8;
+    const midPrice    = payload.readDoubleLE(off); off += 8;
+    const imbalance   = payload.readDoubleLE(off); off += 8;
+    const ofi         = payload.readDoubleLE(off); off += 8;
     const seqNum      = readUInt64LE(payload, off);
 
     const avgLatUs = Number(msgsProcessed) > 0
@@ -259,6 +283,355 @@ function handleStatsFrame(payload) {
     };
 
     latestStats = msg;
+    broadcast(msg);
+}
+
+// ── Microstructure frame ──────────────────────────────────────────────────────
+// Layout: MicrostructurePayload — 13 doubles (13*8 = 104 bytes) + 2 int32 + 2 doubles + uint64 = 136 bytes
+function handleMicrostructureFrame(payload) {
+    if (payload.length < 144) return; // 13 doubles + int32 + double + double + uint64
+
+    let off = 0;
+    const vwap          = payload.readDoubleLE(off); off += 8;
+    const twap          = payload.readDoubleLE(off); off += 8;
+    const microprice    = payload.readDoubleLE(off); off += 8;
+    const kyleLambda    = payload.readDoubleLE(off); off += 8;
+    const amihudIlliq   = payload.readDoubleLE(off); off += 8;
+    const rollSpread    = payload.readDoubleLE(off); off += 8;
+    const signedFlow    = payload.readDoubleLE(off); off += 8;
+    const lastTradeSide = payload.readInt32LE(off);  off += 4;
+    const lastTradePrice= payload.readDoubleLE(off); off += 8;
+    const lastTradeQty  = payload.readDoubleLE(off); off += 8;
+    const tradeCount    = readUInt64LE(payload, off);
+
+    const msg = {
+        type: 'microstructure',
+        vwap:         round4(vwap),
+        twap:         round4(twap),
+        microprice:   round4(microprice),
+        kyleLambda:   round4(kyleLambda),
+        amihudIlliq:  round4(amihudIlliq),
+        rollSpread:   round4(rollSpread),
+        signedFlow:   round2(signedFlow),
+        lastTradeSide,
+        lastTradePrice: round4(lastTradePrice),
+        lastTradeQty:   round4(lastTradeQty),
+        tradeCount:     Number(tradeCount),
+        ts: Date.now(),
+    };
+
+    broadcast(msg);
+}
+
+// ── Signals frame ─────────────────────────────────────────────────────────────
+// Layout: SignalPayload — 8 doubles (64) + 5 int32 (20) = 84 bytes (approximate)
+function handleSignalsFrame(payload) {
+    if (payload.length < 80) return;
+
+    let off = 0;
+    const ofiNormalized = payload.readDoubleLE(off); off += 8;
+    const vpin           = payload.readDoubleLE(off); off += 8;
+    const vpinBuckets    = payload.readInt32LE(off);   off += 4;
+    const momentumScore  = payload.readDoubleLE(off); off += 8;
+    const ar1Coeff       = payload.readDoubleLE(off); off += 8;
+    const zScore         = payload.readDoubleLE(off); off += 8;
+    const regime         = payload.readInt32LE(off);   off += 4;
+    const icebergDetected= payload.readInt32LE(off);   off += 4;
+    const icebergPrice   = payload.readDoubleLE(off); off += 8;
+    const icebergRefills = payload.readInt32LE(off);   off += 4;
+    const spoofingAlert  = payload.readInt32LE(off);   off += 4;
+    const spoofPrice     = payload.readDoubleLE(off); off += 8;
+    const stuffingRatio  = payload.readDoubleLE(off);
+
+    const msg = {
+        type: 'signals',
+        ofiNormalized: round4(ofiNormalized),
+        vpin:          round4(vpin),
+        vpinBuckets,
+        momentumScore: round4(momentumScore),
+        ar1Coeff:      round4(ar1Coeff),
+        zScore:        round4(zScore),
+        regime,
+        icebergDetected: icebergDetected !== 0,
+        icebergPrice:  round4(icebergPrice),
+        icebergRefills,
+        spoofingAlert:  spoofingAlert !== 0,
+        spoofPrice:    round4(spoofPrice),
+        stuffingRatio: round4(stuffingRatio),
+        ts: Date.now(),
+    };
+
+    broadcast(msg);
+}
+
+// ── Risk frame ────────────────────────────────────────────────────────────────
+// Layout: RiskPayload — 17 doubles (136 bytes)
+function handleRiskFrame(payload) {
+    if (payload.length < 136) return;
+
+    let off = 0;
+    const positionSize     = payload.readDoubleLE(off); off += 8;
+    const entryPrice       = payload.readDoubleLE(off); off += 8;
+    const positionNotional = payload.readDoubleLE(off); off += 8;
+    const totalPnl         = payload.readDoubleLE(off); off += 8;
+    const realizedPnl      = payload.readDoubleLE(off); off += 8;
+    const unrealizedPnl    = payload.readDoubleLE(off); off += 8;
+    const winRate          = payload.readDoubleLE(off); off += 8;
+    const fillProb100ms    = payload.readDoubleLE(off); off += 8;
+    const queueDepthAtL1   = payload.readDoubleLE(off); off += 8;
+    const tradeArrivalRate = payload.readDoubleLE(off); off += 8;
+    const sharpePerTrade   = payload.readDoubleLE(off); off += 8;
+    const maxDrawdown      = payload.readDoubleLE(off); off += 8;
+    const compositeScore   = payload.readDoubleLE(off); off += 8;
+    const kalmanPrice      = payload.readDoubleLE(off); off += 8;
+    const kalmanVelocity   = payload.readDoubleLE(off); off += 8;
+    const hitRate          = payload.readDoubleLE(off); off += 8;
+    
+    // v9 Risk extensions
+    let slipLast = 0, slipAvg = 0, slipImpl = 0, slipArrival = 0, dv01 = 0, liquidCost = 0, mktImpact = 0;
+    if (off + 56 <= payload.length) {
+        slipLast         = payload.readDoubleLE(off); off += 8;
+        slipAvg          = payload.readDoubleLE(off); off += 8;
+        slipImpl         = payload.readDoubleLE(off); off += 8;
+        slipArrival      = payload.readDoubleLE(off); off += 8;
+        dv01             = payload.readDoubleLE(off); off += 8;
+        liquidCost       = payload.readDoubleLE(off); off += 8;
+        mktImpact        = payload.readDoubleLE(off); off += 8;
+    }
+
+    const msg = {
+        type: 'risk',
+        positionSize:    round4(positionSize),
+        entryPrice:      round4(entryPrice),
+        positionNotional: round4(positionNotional),
+        totalPnl:        round4(totalPnl),
+        realizedPnl:     round4(realizedPnl),
+        unrealizedPnl:   round4(unrealizedPnl),
+        winRate:         round4(winRate),
+        fillProb100ms:   round4(fillProb100ms),
+        queueDepthAtL1:  round4(queueDepthAtL1),
+        tradeArrivalRate: round4(tradeArrivalRate),
+        sharpePerTrade:  round4(sharpePerTrade),
+        maxDrawdown:     round4(maxDrawdown),
+        compositeScore:  round4(compositeScore),
+        kalmanPrice:     round4(kalmanPrice),
+        kalmanVelocity:  round4(kalmanVelocity),
+        hitRate:         round4(hitRate),
+        slipLast:        round4(slipLast),
+        slipAvg:         round4(slipAvg),
+        slipImpl:        round4(slipImpl),
+        slipArrival:     round4(slipArrival),
+        dv01:            round4(dv01),
+        liquidCost:      round4(liquidCost),
+        mktImpact:       round4(mktImpact),
+        ts: Date.now(),
+    };
+
+    broadcast(msg);
+}
+
+// ── Book Dynamics frame ──────────────────────────────────────────────────────
+// Layout: BookDynamicsPayload — heatmap[50 floats] (200) + 11 doubles (88) + uint64 = 292 bytes
+function handleBookDynamicsFrame(payload) {
+    if (payload.length < 290) return;
+
+    let off = 0;
+    // Read heatmap: 50 floats
+    const heatmap = [];
+    for (let i = 0; i < 50; i++) {
+        heatmap.push(payload.readFloatLE(off));
+        off += 4;
+    }
+    const heatmapMidPrice  = payload.readDoubleLE(off); off += 8;
+    const heatmapBucketUSD = payload.readDoubleLE(off); off += 8;
+    const bidWallVelocity  = payload.readDoubleLE(off); off += 8;
+    const askWallVelocity  = payload.readDoubleLE(off); off += 8;
+    const bidGradientMean  = payload.readDoubleLE(off); off += 8;
+    const askGradientMean  = payload.readDoubleLE(off); off += 8;
+    const phantomRatio     = payload.readDoubleLE(off); off += 8;
+    const hiddenDetectCount= readUInt64LE(payload, off); off += 8;
+    const avgBidLifetimeMs = payload.readDoubleLE(off); off += 8;
+    const avgAskLifetimeMs = payload.readDoubleLE(off); off += 8;
+    const compressionRateUSD= payload.readDoubleLE(off); off += 8;
+    
+    // v9 BookDyn extensions
+    let bidSl = 0, askSl = 0, bidLl = 0, askLl = 0;
+    let bidGrad = 0, askGrad = 0, bidSteep = 0, askSteep = 0;
+    const bidLifeHist = [0,0,0,0,0];
+    const askLifeHist = [0,0,0,0,0];
+
+    if (off + 88 <= payload.length) {
+        bidSl = payload.readInt32LE(off); off += 4;
+        askSl = payload.readInt32LE(off); off += 4;
+        bidLl = payload.readInt32LE(off); off += 4;
+        askLl = payload.readInt32LE(off); off += 4;
+        bidGrad = payload.readDoubleLE(off); off += 8;
+        askGrad = payload.readDoubleLE(off); off += 8;
+        bidSteep = payload.readDoubleLE(off); off += 8;
+        askSteep = payload.readDoubleLE(off); off += 8;
+        for(let i=0; i<5; i++) { bidLifeHist[i] = payload.readInt32LE(off); off += 4; }
+        for(let i=0; i<5; i++) { askLifeHist[i] = payload.readInt32LE(off); off += 4; }
+    }
+
+    const msg = {
+        type: 'bookDynamics',
+        heatmap,
+        heatmapMidPrice:   round4(heatmapMidPrice),
+        heatmapBucketUSD:  round4(heatmapBucketUSD),
+        bidWallVelocity:   round4(bidWallVelocity),
+        askWallVelocity:   round4(askWallVelocity),
+        bidGradientMean:   round4(bidGradientMean),
+        askGradientMean:   round4(askGradientMean),
+        phantomRatio:      round4(phantomRatio),
+        hiddenDetectCount: Number(hiddenDetectCount),
+        avgBidLifetimeMs:  round2(avgBidLifetimeMs),
+        avgAskLifetimeMs:  round2(avgAskLifetimeMs),
+        compressionRateUSD: round4(compressionRateUSD),
+        bidSl, askSl, bidLl, askLl,
+        bidGrad: round4(bidGrad), askGrad: round4(askGrad),
+        bidSteep: round4(bidSteep), askSteep: round4(askSteep),
+        bidLifeHist, askLifeHist,
+        ts: Date.now(),
+    };
+
+    broadcast(msg);
+}
+
+// ── Regime frame ──────────────────────────────────────────────────────────────
+// Layout: RegimePayload — 7 doubles (56) + 2 int32 (8) = 64 bytes
+function handleRegimeFrame(payload) {
+    if (payload.length < 64) return;
+
+    let off = 0;
+    const realizedVolAnnualized = payload.readDoubleLE(off); off += 8;
+    const volRegime             = payload.readInt32LE(off);  off += 4;
+    const hurstExponent         = payload.readDoubleLE(off); off += 8;
+    const hurstRegime           = payload.readInt32LE(off);  off += 4;
+    const hmmBullProb           = payload.readDoubleLE(off); off += 8;
+    const hmmBearProb           = payload.readDoubleLE(off); off += 8;
+    const autocorrLag1          = payload.readDoubleLE(off); off += 8;
+    const regimeAdjustedScore   = payload.readDoubleLE(off); off += 8;
+    const edgeScore             = payload.readDoubleLE(off); off += 8;
+    
+    // v9 Regime extensions
+    let srTicks = 0, srMean = 0, srStd = 0, srZ = 0, midAcfZ = 0, tickVol = 0;
+    const spreadHist = [0,0,0,0,0,0];
+
+    if (off + 72 <= payload.length) {
+        srTicks = payload.readDoubleLE(off); off += 8;
+        srMean = payload.readDoubleLE(off); off += 8;
+        srStd = payload.readDoubleLE(off); off += 8;
+        srZ = payload.readDoubleLE(off); off += 8;
+        midAcfZ = payload.readDoubleLE(off); off += 8;
+        tickVol = payload.readDoubleLE(off); off += 8;
+        for(let i=0; i<6; i++) { spreadHist[i] = payload.readInt32LE(off); off += 4; }
+    }
+
+    const msg = {
+        type: 'regime',
+        realizedVolAnnualized: round4(realizedVolAnnualized),
+        volRegime,
+        hurstExponent:    round4(hurstExponent),
+        hurstRegime,
+        hmmBullProb:      round4(hmmBullProb),
+        hmmBearProb:      round4(hmmBearProb),
+        autocorrLag1:     round4(autocorrLag1),
+        regimeAdjustedScore: round4(regimeAdjustedScore),
+        edgeScore:        round4(edgeScore),
+        srTicks: round2(srTicks),
+        srMean:  round2(srMean),
+        srStd:   round2(srStd),
+        srZ:     round4(srZ),
+        midAcfZ: round4(midAcfZ),
+        tickVol: round4(tickVol),
+        spreadHist,
+        ts: Date.now(),
+    };
+
+    broadcast(msg);
+}
+
+// ── Strategy frame ────────────────────────────────────────────────────────────
+// Layout: StrategyPayload — 18 doubles (144) + int (4) + 2 bools (2) = ~150 bytes
+function handleStrategyFrame(payload) {
+    if (payload.length < 140) return;
+
+    let off = 0;
+    const asBid               = payload.readDoubleLE(off); off += 8;
+    const asAsk               = payload.readDoubleLE(off); off += 8;
+    const asReservation       = payload.readDoubleLE(off); off += 8;
+    const asOptimalSpreadBps  = payload.readDoubleLE(off); off += 8;
+    const asSkewBps           = payload.readDoubleLE(off); off += 8;
+    const asSigmaBps          = payload.readDoubleLE(off); off += 8;
+    const mmNetPnl            = payload.readDoubleLE(off); off += 8;
+    const mmRealPnl           = payload.readDoubleLE(off); off += 8;
+    const mmUnrealPnl         = payload.readDoubleLE(off); off += 8;
+    const mmInventory         = payload.readDoubleLE(off); off += 8;
+    const mmWinRate           = payload.readDoubleLE(off); off += 8;
+    const mmFillRate          = payload.readDoubleLE(off); off += 8;
+    const mmInventoryAlert    = payload.readInt8(off);       off += 1;
+    const mmQuotingGated      = payload.readInt8(off);       off += 1;
+    const latEdgeBps          = payload.readDoubleLE(off); off += 8;
+    const latCumEdgeUSD       = payload.readDoubleLE(off); off += 8;
+    const latSharpe           = payload.readDoubleLE(off); off += 8;
+    const latOpportunities    = payload.readInt32LE(off); off += 4;
+    
+    // v9 Strategy & Cross Exchange extensions
+    let replaySimPnl = 0, replayWinRate = 0, replayMAE = 0, replayMFE = 0, replayMin = 0, replayMax = 0;
+    let exchBid1 = 0, exchAsk1 = 0, exchBid2 = 0, exchAsk2 = 0, exchMidBps = 0, exchArbBps = 0, exchConn = 0;
+
+    if (off + 100 <= payload.length) {
+        replaySimPnl = payload.readDoubleLE(off); off += 8;
+        replayWinRate= payload.readDoubleLE(off); off += 8;
+        replayMAE    = payload.readDoubleLE(off); off += 8;
+        replayMFE    = payload.readDoubleLE(off); off += 8;
+        replayMin    = payload.readDoubleLE(off); off += 8;
+        replayMax    = payload.readDoubleLE(off); off += 8;
+        exchBid1     = payload.readDoubleLE(off); off += 8;
+        exchAsk1     = payload.readDoubleLE(off); off += 8;
+        exchBid2     = payload.readDoubleLE(off); off += 8;
+        exchAsk2     = payload.readDoubleLE(off); off += 8;
+        exchMidBps   = payload.readDoubleLE(off); off += 8;
+        exchArbBps   = payload.readDoubleLE(off); off += 8;
+        exchConn     = payload.readInt32LE(off);  off += 4;
+    }
+
+    const msg = {
+        type: 'strategy',
+        asBid:               round4(asBid),
+        asAsk:               round4(asAsk),
+        asReservation:       round4(asReservation),
+        asOptimalSpreadBps:  round4(asOptimalSpreadBps),
+        asSkewBps:           round4(asSkewBps),
+        asSigmaBps:          round4(asSigmaBps),
+        mmNetPnl:            round4(mmNetPnl),
+        mmRealPnl:           round4(mmRealPnl),
+        mmUnrealPnl:         round4(mmUnrealPnl),
+        mmInventory:         round4(mmInventory),
+        mmWinRate:           round4(mmWinRate),
+        mmFillRate:          round4(mmFillRate),
+        mmInventoryAlert:    mmInventoryAlert !== 0,
+        mmQuotingGated:      mmQuotingGated !== 0,
+        latEdgeBps:          round4(latEdgeBps),
+        latCumEdgeUSD:       round4(latCumEdgeUSD),
+        latSharpe:           round4(latSharpe),
+        latOpportunities,
+        replaySimPnl:        round4(replaySimPnl),
+        replayWinRate:       round4(replayWinRate),
+        replayMAE:           round4(replayMAE),
+        replayMFE:           round4(replayMFE),
+        replayMin:           round4(replayMin),
+        replayMax:           round4(replayMax),
+        exchBid1:            round4(exchBid1),
+        exchAsk1:            round4(exchAsk1),
+        exchBid2:            round4(exchBid2),
+        exchAsk2:            round4(exchAsk2),
+        exchMidBps:          round4(exchMidBps),
+        exchArbBps:          round4(exchArbBps),
+        exchConn:            exchConn !== 0,
+        ts: Date.now(),
+    };
+
     broadcast(msg);
 }
 

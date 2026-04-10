@@ -136,6 +136,36 @@ public:
         Enqueue(BinarySerializer::SerializeTrade(price, qty, isBuy, seqNum));
     }
 
+    // Send microstructure results
+    void SendMicrostructure(const MicrostructureResults& micro) {
+        Enqueue(BinarySerializer::SerializeMicrostructure(micro));
+    }
+
+    // Send signal engine results
+    void SendSignals(const SignalResults& sig) {
+        Enqueue(BinarySerializer::SerializeSignals(sig));
+    }
+
+    // Send risk engine results
+    void SendRisk(const RiskResults& risk) {
+        Enqueue(BinarySerializer::SerializeRisk(risk));
+    }
+
+    // Send book dynamics results
+    void SendBookDynamics(const BookDynamicsResults& bd) {
+        Enqueue(BinarySerializer::SerializeBookDynamics(bd));
+    }
+
+    // Send regime engine results
+    void SendRegime(const RegimeResults& reg) {
+        Enqueue(BinarySerializer::SerializeRegime(reg));
+    }
+
+    // Send strategy engine results
+    void SendStrategy(const StrategyResults& strat) {
+        Enqueue(BinarySerializer::SerializeStrategy(strat));
+    }
+
 private:
     std::string  host_;
     uint16_t     port_;

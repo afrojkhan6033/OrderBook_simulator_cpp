@@ -4,12 +4,13 @@
 #include <list>
 #include <stdexcept>
 #include <sstream>
+#include <atomic>
 #include "OrderType.h"
 #include "Constants.h"
 
 // Forward declarations
-using Price = std::int32_t;
-using Quantity = std::uint32_t;
+using Price    = int64_t;
+using Quantity = int64_t;
 using OrderId = std::uint64_t;
 
 class Order {
@@ -58,6 +59,26 @@ public:
 
         price_ = price;
         orderType_ = OrderType::GoodTillCancel;
+    }
+
+    // Methods for memory pool reuse (internal use only)
+    void reinitialize(OrderType orderType, OrderId orderId, Side side,
+                      Price price, Quantity quantity) {
+        orderType_ = orderType;
+        orderId_ = orderId;
+        side_ = side;
+        price_ = price;
+        initialQuantity_ = quantity;
+        remainingQuantity_ = quantity;
+    }
+
+    void reset_for_reuse() {
+        orderType_ = OrderType::GoodTillCancel;
+        orderId_ = 0;
+        side_ = Side::Buy;
+        price_ = 0;
+        initialQuantity_ = 0;
+        remainingQuantity_ = 0;
     }
 
 private:
