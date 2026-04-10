@@ -23,7 +23,7 @@ graph TD
         RE[Regime & Dynamics Engine]:::cpp
         BS[TCP Binary Serializer]:::cpp
         
-        MD -->|@depth / @aggTrade| OB
+        MD -->|"depth / aggTrade"| OB
         OB --> AE
         AE --> SE
         OB --> RE
