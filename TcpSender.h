@@ -166,6 +166,11 @@ public:
         Enqueue(BinarySerializer::SerializeStrategy(strat));
     }
 
+    // Send cross-exchange feed snapshot
+    void SendCrossExchange(double bid, double ask, bool connected, bool isSpot, double binanceMid) {
+        Enqueue(BinarySerializer::SerializeCrossExchange(bid, ask, connected, isSpot, binanceMid));
+    }
+
 private:
     std::string  host_;
     uint16_t     port_;

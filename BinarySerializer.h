@@ -74,6 +74,7 @@ static constexpr uint8_t  MSG_RISK              = 6;
 static constexpr uint8_t  MSG_BOOK_DYNAMICS     = 7;
 static constexpr uint8_t  MSG_REGIME            = 8;
 static constexpr uint8_t  MSG_STRATEGY          = 9;
+static constexpr uint8_t  MSG_CROSS_EXCHANGE    = 10;
 
 // ── Wire structs (packed, no padding) ────────────────────────────────────────
 #pragma pack(push, 1)
@@ -242,6 +243,21 @@ struct StrategyPayload {
     double   replaySimPnl, replayWinRate, replayMAE, replayMFE, replayMin, replayMax;
     double   exchBid1, exchAsk1, exchBid2, exchAsk2, exchMidBps, exchArbBps;
     int32_t  exchConn;
+};
+
+// Cross-Exchange Feed payload (MSG_CROSS_EXCHANGE)
+struct CrossExchangePayload {
+    double   bid;           // secondary exchange best bid
+    double   ask;           // secondary exchange best ask
+    double   mid;           // (bid+ask)/2
+    double   spread;        // ask - bid (USD)
+    double   spreadBps;     // spread in bps
+    int32_t  connected;     // 1=connected, 0=disconnected
+    int32_t  isSpot;        // 1=spot, 0=perp
+    double   binanceMid;    // primary exchange mid for drift calc
+    double   driftUSD;      // cfMid - binanceMid
+    double   driftBps;      // drift in bps
+    double   arbNetBps;     // cross-exchange arb opportunity
 };
 
 #pragma pack(pop)
@@ -592,6 +608,40 @@ public:
         sp.exchArbBps         = strat.exchArbBps;
         sp.exchConn           = strat.exchConnected ? 1 : 0;
         append(buf, sp);
+
+        return buf;
+    }
+
+    // Serialize cross-exchange feed snapshot
+    static std::vector<uint8_t> SerializeCrossExchange(
+        double bid, double ask, bool connected, bool isSpot,
+        double binanceMid)
+    {
+        constexpr uint32_t payload_len = sizeof(CrossExchangePayload);
+        std::vector<uint8_t> buf;
+        buf.reserve(sizeof(FrameHeader) + payload_len);
+
+        FrameHeader hdr;
+        hdr.magic[0]    = MAGIC_0;
+        hdr.magic[1]    = MAGIC_1;
+        hdr.version     = VERSION;
+        hdr.msg_type    = MSG_CROSS_EXCHANGE;
+        hdr.payload_len = payload_len;
+        append(buf, hdr);
+
+        CrossExchangePayload cp{};
+        cp.bid        = bid;
+        cp.ask        = ask;
+        cp.mid        = (bid > 0 && ask > 0) ? (bid + ask) / 2.0 : 0.0;
+        cp.spread     = (bid > 0 && ask > 0) ? (ask - bid) : 0.0;
+        cp.spreadBps  = (cp.mid > 0) ? (cp.spread / cp.mid) * 10000.0 : 0.0;
+        cp.connected  = connected ? 1 : 0;
+        cp.isSpot     = isSpot ? 1 : 0;
+        cp.binanceMid = binanceMid;
+        cp.driftUSD   = (binanceMid > 0 && cp.mid > 0) ? (cp.mid - binanceMid) : 0.0;
+        cp.driftBps   = (binanceMid > 0) ? (cp.driftUSD / binanceMid) * 10000.0 : 0.0;
+        cp.arbNetBps  = 0.0;  // can be computed later
+        append(buf, cp);
 
         return buf;
     }

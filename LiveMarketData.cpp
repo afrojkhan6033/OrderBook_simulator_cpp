@@ -1813,6 +1813,13 @@ int main(int argc, char *argv[]) {
                             strat.OnTrade(tradePrice, tradeQty, buyerMM, sctx, tradeUs);
                         }
 
+                        // Send trade to UI via TCP gateway
+                        sender.SendTrade(
+                            static_cast<int32_t>(tradePrice * 10000),
+                            static_cast<uint32_t>(tradeQty * 10000),
+                            !buyerMM,   // buyerMaker=true → taker sold → isBuy=false
+                            metrics.sequenceNumber.load());
+
                         continue;  // do NOT process as depth
                     }
 
@@ -1985,6 +1992,16 @@ int main(int argc, char *argv[]) {
                         sender.SendBookDynamics(bookDyn.GetResults());
                         sender.SendRegime(regime.GetResults());
                         sender.SendStrategy(strat.GetResults());
+
+                        // v9: send standalone cross-exchange feed to UI
+                        {
+                            double cfBid = crossFeed.GetBid();
+                            double cfAsk = crossFeed.GetAsk();
+                            bool   cfConn = crossFeed.IsConnected();
+                            bool   cfSpot = crossFeed.IsSpot();
+                            double binMid = analytics.midPrice;
+                            sender.SendCrossExchange(cfBid, cfAsk, cfConn, cfSpot, binMid);
+                        }
 
                         lastDisplayTime = now;
                     }

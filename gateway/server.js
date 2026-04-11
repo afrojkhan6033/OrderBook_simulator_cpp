@@ -38,6 +38,7 @@ const MSG_RISK             = 6;
 const MSG_BOOK_DYNAMICS    = 7;
 const MSG_REGIME           = 8;
 const MSG_STRATEGY         = 9;
+const MSG_CROSS_EXCHANGE   = 10;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let latestSnapshot = null;   // cached for new WS clients
@@ -148,6 +149,9 @@ function dispatchFrame(msgType, payload) {
                 break;
             case MSG_STRATEGY:
                 handleStrategyFrame(payload);
+                break;
+            case MSG_CROSS_EXCHANGE:
+                handleCrossExchangeFrame(payload);
                 break;
             default:
                 console.warn(`[Parser] Unknown msg_type: ${msgType}`);
@@ -287,9 +291,9 @@ function handleStatsFrame(payload) {
 }
 
 // ── Microstructure frame ──────────────────────────────────────────────────────
-// Layout: MicrostructurePayload — 13 doubles (13*8 = 104 bytes) + 2 int32 + 2 doubles + uint64 = 136 bytes
+// Layout: MicrostructurePayload — 7 doubles (56) + int32 (4) + 2 doubles (16) + uint64 (8) = 84 bytes
 function handleMicrostructureFrame(payload) {
-    if (payload.length < 144) return; // 13 doubles + int32 + double + double + uint64
+    if (payload.length < 84) return;  // FIX: was 144, actual struct is 84 bytes
 
     let off = 0;
     const vwap          = payload.readDoubleLE(off); off += 8;
@@ -629,6 +633,43 @@ function handleStrategyFrame(payload) {
         exchMidBps:          round4(exchMidBps),
         exchArbBps:          round4(exchArbBps),
         exchConn:            exchConn !== 0,
+        ts: Date.now(),
+    };
+
+    broadcast(msg);
+}
+
+// ── Cross-Exchange Feed frame ─────────────────────────────────────────────────
+// Layout: CrossExchangePayload — 5 doubles(40) + 2 int32(8) + 4 doubles(32) = 80 bytes
+function handleCrossExchangeFrame(payload) {
+    if (payload.length < 80) return;
+
+    let off = 0;
+    const bid         = payload.readDoubleLE(off); off += 8;
+    const ask         = payload.readDoubleLE(off); off += 8;
+    const mid         = payload.readDoubleLE(off); off += 8;
+    const spread      = payload.readDoubleLE(off); off += 8;
+    const spreadBps   = payload.readDoubleLE(off); off += 8;
+    const connected   = payload.readInt32LE(off);  off += 4;
+    const isSpot      = payload.readInt32LE(off);  off += 4;
+    const binanceMid  = payload.readDoubleLE(off); off += 8;
+    const driftUSD    = payload.readDoubleLE(off); off += 8;
+    const driftBps    = payload.readDoubleLE(off); off += 8;
+    const arbNetBps   = payload.readDoubleLE(off);
+
+    const msg = {
+        type: 'crossExchange',
+        bid:        round4(bid),
+        ask:        round4(ask),
+        mid:        round4(mid),
+        spread:     round4(spread),
+        spreadBps:  round2(spreadBps),
+        connected:  connected !== 0,
+        isSpot:     isSpot !== 0,
+        binanceMid: round4(binanceMid),
+        driftUSD:   round4(driftUSD),
+        driftBps:   round2(driftBps),
+        arbNetBps:  round2(arbNetBps),
         ts: Date.now(),
     };
 

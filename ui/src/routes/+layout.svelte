@@ -1,3 +1,7 @@
+<script>
+  let { children } = $props();
+</script>
+
 <svelte:head>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
@@ -6,11 +10,9 @@
     rel="stylesheet"
   />
 </svelte:head>
-<script>
-  let { children } = $props();
-</script>
 
 {@render children()}
+
 <style>
   :global(*, *::before, *::after) {
     box-sizing: border-box;
@@ -56,6 +58,7 @@
     --teal-dim: rgba(34, 211, 238, 0.12);
 
     --orange:   #fb923c;
+    --orange-dim: rgba(251, 146, 60, 0.12);
 
     /* ── Text ─────────────────────────────────────────────── */
     --text:     #d4ddf7;
