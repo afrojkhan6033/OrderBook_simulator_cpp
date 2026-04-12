@@ -27,6 +27,7 @@
   // ── Reactive state ───────────────────────────────────────────────────────────
   let connected  = $state(false);
   let wsStatus   = $state('CONNECTING');
+  let backendSymbol = $state('SOLUSDT');
   let bids       = $state([]);
   let asks       = $state([]);
 
@@ -209,6 +210,10 @@
 
     } else if (msg.type === 'stats') {
       stats = { ...stats, ...msg };
+<<<<<<< HEAD
+=======
+      if (msg.symbol) backendSymbol = msg.symbol;
+>>>>>>> f815a5b (Updated engine, UI, and project configuration)
       latHistory = [...latHistory, {
         proc: msg.avgLatUs || 0,
         net:  msg.netLatUs || 0
@@ -532,7 +537,11 @@
 
     <div class="hstat">
       <span class="hl">SYMBOL</span>
+<<<<<<< HEAD
       <span class="hv accent">SOLUSDT</span>
+=======
+      <span class="hv accent">{backendSymbol}</span>
+>>>>>>> f815a5b (Updated engine, UI, and project configuration)
     </div>
 
     <div class="hstat">

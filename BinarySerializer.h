@@ -119,6 +119,7 @@ struct StatsPayload {
     double   imbalance;
     double   ofi;
     uint64_t sequence_number;
+    char     symbol[16];
 };
 
 #pragma pack(pop)
@@ -350,7 +351,8 @@ public:
     // Serialize a PerformanceMetrics + MarketAnalytics stats frame.
     static std::vector<uint8_t> SerializeStats(
         const PerformanceMetrics& metrics,
-        const MarketAnalytics&    analytics)
+        const MarketAnalytics&    analytics,
+        const std::string&        symbol)
     {
         constexpr uint32_t payload_len = sizeof(StatsPayload);
         std::vector<uint8_t> buf;
@@ -371,6 +373,8 @@ public:
         sp.imbalance                = analytics.imbalance;
         sp.ofi                      = analytics.ofi / 10000.0;  // normalise
         sp.sequence_number          = metrics.sequenceNumber.load();
+        std::memset(sp.symbol, 0, 16);
+        std::strncpy(sp.symbol, symbol.c_str(), 15);
         append(buf, sp);
 
         return buf;

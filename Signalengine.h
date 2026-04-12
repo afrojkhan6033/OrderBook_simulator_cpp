@@ -43,9 +43,9 @@
 #include <algorithm>
 #include <numeric>
 
-// ─── Top-of-book snapshot (L1–L5 extracted from PriceLevelSnapshot) ──────────
+// ─── Top-of-book snapshot (L1-L15 extracted from PriceLevelSnapshot) ─────────
 struct TopOfBook {
-    static constexpr int N = 5;
+    static constexpr int N = 15;
     double bidP[N] = {}, bidQ[N] = {};
     double askP[N] = {}, askQ[N] = {};
     int    levels  = 0;    // valid entries in [0, N]
@@ -610,6 +610,18 @@ public:
             : 1.0;
         double largeThreshold = LARGE_MULT * (meanQ + 1e-9);
 
+        // Evict old trades to prevent unbounded growth of trades_ map
+        if (nowUs - lastEvictUs_ > 5000000LL) {  // 5 seconds
+            lastEvictUs_ = nowUs;
+            for (auto it = trades_.begin(); it != trades_.end(); ) {
+                if ((nowUs - it->second) > FILL_WINDOW_US * 2) {
+                    it = trades_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
         // Update each side
         ProcessSide(tob.bidP, tob.bidQ, validLevels, +1, nowUs, largeThreshold, bidLevels_);
         ProcessSide(tob.askP, tob.askQ, validLevels, -1, nowUs, largeThreshold, askLevels_);
@@ -623,7 +635,7 @@ public:
 
 private:
     static int64_t PriceKey(double price) {
-        return static_cast<int64_t>(price * 100);  // bucket at $0.01 granularity
+        return static_cast<int64_t>(price * 10000.0);  // Use identical scaling as book keys
     }
 
     struct LevelEntry {
@@ -668,15 +680,16 @@ private:
                     if (!likelyFill) {
                         // Cancel event
                         if (e.windowStartUs == 0) e.windowStartUs = nowUs;
-                        e.cancelCount++;
-                        e.cancelVolume += disappeared;
 
-                        // Expire window
+                        // Expire window BEFORE checking / counting
                         if ((nowUs - e.windowStartUs) > WINDOW_US) {
                             e.cancelCount  = 0;
                             e.cancelVolume = 0.0;
                             e.windowStartUs= nowUs;
                         }
+
+                        e.cancelCount++;
+                        e.cancelVolume += disappeared;
 
                         // Alert?
                         if (e.cancelCount >= CANCEL_THRESHOLD) {
@@ -694,6 +707,7 @@ private:
     std::unordered_map<int64_t, LevelEntry> bidLevels_;
     std::unordered_map<int64_t, LevelEntry> askLevels_;
     std::unordered_map<int64_t, int64_t>    trades_;  // price_key → last_trade_us
+    int64_t lastEvictUs_ = 0;
 
     bool   alert_       = false;
     double spoofPrice_  = 0.0;
@@ -744,6 +758,12 @@ public:
     // ── Call on each depth update ─────────────────────────────────────────────
     // totalQtyChange: Σ|ΔQty| extracted from depth JSON "b" and "a" arrays
     void OnDepthUpdate(const TopOfBook &tob, double totalQtyChange, int64_t nowUs) {
+        // Clear sticky alerts
+        iceberg_.ClearAlert();
+        spoof_.ClearAlert();
+        results_.icebergDetected = false;
+        results_.spoofingAlert   = false;
+
         // 1. Multi-Level OFI (improved with exponential decay)
         ofi_.OnBookUpdate(tob);
         results_.ofiNormalized = ofi_.GetNormalized();
@@ -801,25 +821,4 @@ private:
     double  lastTradePrice_ = 0.0;
 };
 
-// ─── Helper: extract TopOfBook from a PriceLevelSnapshot ─────────────────────
-// Inlined here so any TU that includes SignalEngine.h can use it.
-// Requires PriceLevelSnapshot to be fully defined (include MarketTypes.h first).
-#include "MarketTypes.h"
-
-inline TopOfBook ExtractTopOfBook(const PriceLevelSnapshot &snap) {
-    TopOfBook tob;
-    int i = 0;
-    for (auto it = snap.bids.begin(); it != snap.bids.end() && i < TopOfBook::N; ++it, ++i) {
-        tob.bidP[i] = static_cast<double>(it->first)  / 10000.0;
-        tob.bidQ[i] = static_cast<double>(it->second) / 10000.0;
-    }
-    i = 0;
-    for (auto it = snap.asks.begin(); it != snap.asks.end() && i < TopOfBook::N; ++it, ++i) {
-        tob.askP[i] = static_cast<double>(it->first)  / 10000.0;
-        tob.askQ[i] = static_cast<double>(it->second) / 10000.0;
-    }
-    tob.levels = static_cast<int>(std::min({
-        static_cast<size_t>(TopOfBook::N), snap.bids.size(), snap.asks.size()
-    }));
-    return tob;
-}
+// End of SignalEngine.h

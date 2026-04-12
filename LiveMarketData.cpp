@@ -110,6 +110,7 @@
 #include "RegimeEngine.h"        // v7: Statistical Regime & Market State
 #include "StrategyEngine.h"      // v8: Strategy Simulation & Backtesting
 #include "CrossExchangeFeed.h"   // v9: Standalone multi-exchange L1 feed (Bybit/OKX)
+#include "DemoTradeExecutor.h"   // v10: Binance Demo Trade Execution API
 
 // ── System / third-party headers ─────────────────────────────────────────────
 #include <boost/beast/core.hpp>
@@ -891,6 +892,25 @@ public:
         if (currentSnapshot_.asks.empty()) return 0.0;
         return currentSnapshot_.asks.begin()->first / 10000.0;
     }
+
+    TopOfBook GetTopOfBook() const {
+        std::shared_lock<std::shared_mutex> lock(snapshotMutex_);
+        TopOfBook tob;
+        int i = 0;
+        for (auto it = currentSnapshot_.bids.begin(); it != currentSnapshot_.bids.end() && i < TopOfBook::N; ++it, ++i) {
+            tob.bidP[i] = static_cast<double>(it->first)  / 10000.0;
+            tob.bidQ[i] = static_cast<double>(it->second) / 10000.0;
+        }
+        int bidCount = i;
+        i = 0;
+        for (auto it = currentSnapshot_.asks.begin(); it != currentSnapshot_.asks.end() && i < TopOfBook::N; ++it, ++i) {
+            tob.askP[i] = static_cast<double>(it->first)  / 10000.0;
+            tob.askQ[i] = static_cast<double>(it->second) / 10000.0;
+        }
+        tob.levels = std::min(bidCount, i);
+        return tob;
+    }
+
 };
 
 // ============================================================================
@@ -1579,7 +1599,7 @@ static double ComputeTotalQtyChange(const nlohmann::json &j) {
 int main(int argc, char *argv[]) {
     std::cout << "[INIT] Starting HFT Engine..." << std::endl;
 
-    std::string symbol           = "SOLUSDT";
+    std::string symbol           = "BTCUSDT";
     std::string marketType       = "spot";
     int         displayLevels    = 20;
     int         refreshIntervalMs = 1000;
@@ -1627,8 +1647,22 @@ int main(int argc, char *argv[]) {
         BookDynamicsEngine   bookDyn;                 // v6: Book Dynamics
         RegimeEngine         regime;                  // v7: Statistical Regime
         StrategyEngine       strat;                   // v8: Strategy Simulation
+        // DemoTradeExecutor    demoExec;            // DISABLED: reconnect when strategy is profitable
         SecondExchangeFeed   crossFeed;                // v9: Standalone CrossExchangeFeed
         PerformanceMetrics  &metrics = wsFeeds.GetMutableMetrics();
+
+        // ── Demo Execution DISABLED ──────────────────────────────────────
+        // demoExec.Initialize("demo_config.json");
+        //
+        // strat.SetFillCallback([&demoExec](bool isBuy, double qtyModifier) {
+        //     demoExec.PlaceMarketOrder(isBuy, qtyModifier);
+        // });
+        //
+        // demoExec.SetFillCallback([&risk](const DemoFill& fill) {
+        //     int dir = fill.isBuy ? +1 : -1;
+        //     risk.OnTrade(fill.price, fill.qty, dir);
+        // });
+
 
         // v8: start second exchange feed (Bybit) for cross-exchange arb
         strat.GetSecondFeed().Start(symbol);
@@ -1866,6 +1900,11 @@ int main(int argc, char *argv[]) {
                         ((bestAsk - bestBid) / lastMid) * 10000.0 : 0.0;
                     metrics.currentMidPrice = lastMid;
 
+                    // v4: Update signals per-message (for Iceberg/Spoofing/Stuffing)
+                    TopOfBook tob = processor.GetTopOfBook();
+                    int64_t currentUs = MicrostructureEngine::CurrentUsEpoch();
+                    signals.OnDepthUpdate(tob, totalQtyChange, currentUs);
+
                     auto now = std::chrono::steady_clock::now();
 
                     // ── Display on timer ───────────────────────────────────────
@@ -1895,10 +1934,7 @@ int main(int argc, char *argv[]) {
                         // v3: copy microstructure results into analytics
                         analytics.CopyFromMicro(micro.GetResults());
 
-                        // v4-v8: Update all signal/risk/strategy engines once per second
-                        TopOfBook tob = ExtractTopOfBook(snap);
                         int64_t nowUs = MicrostructureEngine::CurrentUsEpoch();
-                        signals.OnDepthUpdate(tob, 0.0, nowUs);  // No qty change for display
 
                         if (!snap.bids.empty() && !snap.asks.empty()) {
                             double bidQ1 = snap.bids.begin()->second / 10000.0;
@@ -1928,6 +1964,14 @@ int main(int argc, char *argv[]) {
                                 signals.GetResults().vpin,
                                 risk.GetResults().hitRate,
                                 nowUs);
+
+                            // v3: feed regime context into RiskEngine for position tracker gating
+                            risk.SetRegimeContext(
+                                regime.GetResults().volRegime,
+                                regime.GetResults().flashCrashPrecursor,
+                                regime.GetResults().hmmState,
+                                regime.GetResults().hmmConfident,
+                                regime.GetResults().regimeConfidence);
 
                             StrategyContext sctx8;
                             sctx8.mid                   = analytics.midPrice;
@@ -1981,7 +2025,7 @@ int main(int argc, char *argv[]) {
                                               crossFeed,              // v9
                                               displayLevels);
 
-                        sender.SendSnapshot(snap, metrics, analytics);
+                        sender.SendSnapshot(snap, metrics, analytics, symbol);
 
                         // v3: send dedicated microstructure TCP frame
                         sender.SendMicrostructure(micro.GetResults());

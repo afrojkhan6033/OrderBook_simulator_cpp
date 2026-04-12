@@ -250,7 +250,7 @@ function handleTradeFrame(payload) {
 // ── Stats frame ───────────────────────────────────────────────────────────────
 // Layout: StatsPayload — see BinarySerializer.h
 function handleStatsFrame(payload) {
-    if (payload.length < 88) return;  // 8*6 + 8*4 + 8 = 88 bytes
+    if (payload.length < 104) return;  // 8*6 + 8*4 + 8 + 16 = 104 bytes
 
     let off = 0;
     const msgsReceived    = readUInt64LE(payload, off); off += 8;
@@ -264,7 +264,13 @@ function handleStatsFrame(payload) {
     const midPrice    = payload.readDoubleLE(off); off += 8;
     const imbalance   = payload.readDoubleLE(off); off += 8;
     const ofi         = payload.readDoubleLE(off); off += 8;
-    const seqNum      = readUInt64LE(payload, off);
+    const seqNum      = readUInt64LE(payload, off); off += 8;
+
+    let symStr = "";
+    if (off + 16 <= payload.length) {
+        symStr = payload.toString('utf8', off, off + 16).replace(/\0/g, '');
+        off += 16;
+    }
 
     const avgLatUs = Number(msgsProcessed) > 0
         ? round2(Number(totalProcUs) / Number(msgsProcessed))
@@ -284,6 +290,7 @@ function handleStatsFrame(payload) {
         ofi:           round2(ofi),
         seqNum:        Number(seqNum),
         ts: Date.now(),
+        symbol:        symStr || 'SOLUSDT'
     };
 
     latestStats = msg;

@@ -120,15 +120,15 @@ public:
         if (sock_ != INVALID_SOCK) { CLOSE_SOCK(sock_); sock_ = INVALID_SOCK; }
     }
 
-    // Send a full snapshot + stats in one call (called from your main loop)
     void SendSnapshot(
         const PriceLevelSnapshot& snap,
         const PerformanceMetrics& metrics,
         const MarketAnalytics&    analytics,
+        const std::string&        symbol,
         int depth = 20)
     {
         Enqueue(BinarySerializer::SerializeSnapshot(snap, MSG_SNAPSHOT, depth));
-        Enqueue(BinarySerializer::SerializeStats(metrics, analytics));
+        Enqueue(BinarySerializer::SerializeStats(metrics, analytics, symbol));
     }
 
     // Send a trade execution

@@ -23,4 +23,7 @@ Thumbs.db
 .env
 
 # VSCode settings
-.vscode/
+.vscode/DemoTradeExecutor.h 
+demo_config.json 
+DemoTradeExecutor.h 
+ui/.vscode/ 

@@ -403,6 +403,12 @@ public:
 
     struct FillRecord { double fillP, midAtFill; int side, tLeft; double unit; };
 
+    using FillCallback = std::function<void(bool /*isBuy*/, double /*qtyMultiplier*/)>;
+
+    void SetFillCallback(FillCallback cb) {
+        fillCallback_ = std::move(cb);
+    }
+
     // ── OnTick: called every depth update ─────────────────────────────────────
     void OnTick(const AvellanedaStoikovModelV3::Quotes &q,
                 const StrategyContext &c,
@@ -563,6 +569,10 @@ private:
             if ((int)winTracker_.size()>200) winTracker_.pop_front();
             if (inventory_ >= 0) { avgSellProceeds_=0; roundTrips_++; }
         }
+
+        if (fillCallback_) {
+            fillCallback_(true, unit);
+        }
     }
 
     void ExecuteAskFill(double fillP, double mid, double micro, double unit, int64_t nowUs) {
@@ -584,6 +594,10 @@ private:
             if ((int)winTracker_.size()>200) winTracker_.pop_front();
             if (inventory_ <= 0) { avgBuyCost_=0; roundTrips_++; }
         }
+
+        if (fillCallback_) {
+            fillCallback_(false, unit);
+        }
     }
 
     double inventory_=0, avgBuyCost_=0, avgSellProceeds_=0;
@@ -594,6 +608,8 @@ private:
     std::deque<FillRecord> pending_;
     std::deque<double>     winTracker_;
     std::deque<int64_t>    fillTimes_;
+
+    FillCallback fillCallback_;
 };
 
 // ============================================================================
@@ -860,6 +876,10 @@ private:
 // ============================================================================
 class StrategyEngine {
 public:
+    void SetFillCallback(MarketMakingSimulatorV3::FillCallback cb) {
+        mm_.SetFillCallback(std::move(cb));
+    }
+
     // ── aggTrade path ─────────────────────────────────────────────────────────
     void OnTrade(double tradePrice, double /*qty*/, bool buyerMM,
                  const StrategyContext &ctx, int64_t nowUs)
